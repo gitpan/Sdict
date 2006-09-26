@@ -32,6 +32,11 @@ compilation (not needed for regular usage):
    Unicode::Collate
 
 
+LIMITATIONS
+
+The only little-endian architectures are supported.
+
+
 COPYRIGHT AND LICENSE
 
 Copyright (c) 2001-2006 by Alexey Semenoff [http://swaj.net].

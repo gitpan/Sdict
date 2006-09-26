@@ -8,4 +8,10 @@ t/test.dct
 t/test.sdct
 lib/Sdict.pm
 lib/SdictUtils.pm
+lib/latin-cyrillic.pl
+bin/sdict.plx
+bin/dctinfo.plx
+bin/sdict-tools.plx
+bin/makedct.sh
+cgi/sdict.cgi
 META.yml                                 Module meta-data (added by MakeMaker)

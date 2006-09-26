@@ -1,6 +1,6 @@
 # $RCSfile: Sdict.pm,v $
 # $Author: swaj $
-# $Revision: 1.33 $
+# $Revision: 1.34 $
 #
 # Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
 # Distributed under GNU Public License.
@@ -46,7 +46,7 @@ use vars qw(
 	    $sort_table_pl
 	    );
 
-$VERSION = '2.6';
+$VERSION = '2.7';
 
 @ISA = qw(Exporter);
 
@@ -2367,19 +2367,36 @@ Sdict - Module to work with Sdictionary .dct files
 
 	$sd->parse_args;
 
+	$sd->analyze;
+
 	$sd->convert;
 
 	exit;
 
 
-
     # Working with .dct
 	$sd = Sdict->new;
 
-	$sd->debug_on;
+	$sd->debug_on; # or $sd->debug_off;
 
-	$sd->init ( { file => 'my_cool.dct' } );
+	$sd->init ( { file => 'test.dct' } );
 
+    # Load dictionary
+	unless ($sd->load_dictionary_fast) {
+	    die 'Unable load dictionary';
+	}
+
+
+    # Locate word
+        my $article = $sd->search_word ('fox');
+        print "translation is '$article'\n" if $article;
+
+
+    # Unload dictionary
+	$sd->unload_dictionary;
+
+
+    # If you are interested about header only
         unless ($sd->read_header) {
             die 'Unable to load dictionary';
             next;
@@ -2388,13 +2405,17 @@ Sdict - Module to work with Sdictionary .dct files
         warn "found '$sd->{header}->{title}'";
 
 
+    # Information about dictionary
+        $title = $sd->{header}->{title};
+	$copyright = $sd->{header}->{copyright};
+	$word_lang = $sd->{header}->{w_lang};
+	$article_lang = $sd->{header}->{a_lang};
+	$version = $sd->{header}->{version};
+	$words_total = $sd->{header}->{words_total};
 
-     # Load dictionary
-	unless ($sd->load_dictionary_fast) {
-	    die 'Unable load dictionary';
-	}
 
-	print $sd->{header}->{title}, "\n";
+    # Print info
+	$sd->print_dct_info;
 
 
 
@@ -2418,22 +2439,16 @@ Sdict - Module to work with Sdictionary .dct files
 	$word = $sd->get_prev_word;
 
 
-    # Get article
+    # Get article you stay on
 	$article = $sd->read_unit($sd->{cur_word_pos} + $sd->{articles_pos});
-
-
-     # Unload dictionary
-	$sd->unload_dictionary;
-
-	exit;
 
 
 =head1 AUTHOR
 
 The I<Sdict> module was written by Alexey Semenoff,
-F[http://swaj.net] as part of Sdictionary project. The project homepage is
+F<swaj@swaj.net> as part of Sdictionary project. The project homepage is
 http://freshmeat.net/projects/sdictionary/.
 
 =head1 MODIFICATION HISTORY
 
-See the ChangLog file.
+See the Changes file.

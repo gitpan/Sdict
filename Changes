@@ -1,128 +1,49 @@
-#
+# $RCSfile: ChangeLog,v $
 # $Author: swaj $
-# $Revision: 1.41 $
-#
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
-# Distributed under GNU Public License.
-#
+# $Revision: 1.2 $
 
-1.2.1
+
+2.7
+	Documentation was updated. More files included into distribution
+
+2.6
 	Dictionary compiler fixes for win32 platform.
 
-1.2.0
+2.5
 	Dictionary compiler bug was fixed.
 
-1.1.6
-	A lot of changes in ptksdict GUI, '--geometry=' switch was
-	added. 
-
-1.1.5
-	History geometry management was fixed in ptksdict. GUI cosmetic
-	changes were made.
-
-1.1.4
+2.4
 	New features in Web dictionary script: dictionary browser,
 	logging, new page layout. Numeric sorting was added to dictionary
 	compiler. Small utility called dctinfo was added to
 	distribution. Bugfixes.
 
-1.1.3
+2.3
 	Optional 'charset' keyword added to header in dct source file. A
 	number of bugs were fixed. Code cleanups.
 
-1.1.2
+2.2
 	'--lowercase-alias', '--force-to-lowercase' and
 	'--disable-duplicates' options were added to dictionary
 	compiler. Non-standard indexes now supported in ptksdict. Online
 	dictionary compiler is launched. Code cleanups. Bugfixes. 
 	
-1.1
-	Found records counter added to Data application. Bugfixes.
-	
-1.0.4
+2.1
 	Variable short index levels added to .dct file compiler.
 	Sdict library now supports 'analyze' method to get overall
 	information about optimal dictionary compilation
 	method. Configurable article format in ptksdict. Documentation was
-	updated as well as bugfixes were made.
-
-1.0.3
-	Application icons were updated. Delete dialogs and selectable sort
-	order menu were added to Data application. Cosmetical changes to
-	GUI. Installation tips were added to sdict.cgi.
-	
-1.0.2
-        Added application 'Data'. Config files are
-	joined. 'default_encoding' parameter added to config file. Home
-	directory changed to '/opt/sdict' as well as directories layout
-	was reorganized; rpm and deb packages were added. Bugfixes and
-	cosmetic changes.  
-
-1.0.1
-	Added jotter, the tool to create/edit simple notebooks and export
-	them to .txt files for dictionary compilation. Jotter has rich of
-	features: data compression, encrypting and others. The idea was
-	inspired by EPOC ER5 jotter.
-	
-1.0.0
-	'cache_search_results' is tunable parameter; remember last
-	dictionary when quit; history fixed; a lot of cosmetical changes;
-	bugfixes. 
-	
-0.7.7
-	Entry navigation bug with non ASCII was fixed. History cache was
-	added. A lot of small bugfixes. New dictionary databases.
-
-0.7.6
-        Navigation added. Minor bugfixes. New dictionary databases.
-
-0.7.5
-	Added recoding 'none' to enable normal input with Unix and UTF-8
-	locales. Middle mouse button binding removed (Ctrl-Z still
-	works). Paste handler added.
-	
-0.7.4
-	Documentation added to Sdict.pm. Cleanups.
-
-0.7.3
-	Short index fixed. A lot of optimisations. New dictionaries.
-
-0.7.2
+	updated as well as bugfixes were made. Documentation added to Sdict.pm.
 	Full Win32 support.
 
-0.7.1
-	More key bindings, initialisation log added, online version checking, bugfixes. 
-	
-0.7.0
-	Dynamical dictionary loading, which dramatically reduces memory
-	usage. New configurable options: Alt-N to switch dictionaries,
-	encoding auto-switch, search in articles and more. Console-based
-	client and Web client were added. A lot of bug fixes and code
-	cleanups. 
-
-0.6.6
-	Bugfixes, new key bindings, (de)iconify using USR1/2 signals, code
-	cleanups, and new dictionary databases with screenshots. 
-
-0.6.5
-	Bugfixes were made. The "Open" menu item was added to the "File"
-	menu. More dictionary databases were added. 
-
-0.6.4
-	Article rendering has been improved. There are bugfixes and new dictionaries.
-
-0.6.3
-	Bugfixes, code cleanups, and new dictionaries. 
-
-0.6.2
-	This release features bugfixes, search optimisations, and new dictionaries.
-
-0.6.1
-	New formatting tags have been added. The documentation has been caught up.
-
-0.6
+2.0
 	Initial announcement.
 
 
 	
 __END__
+
+
+
+
+

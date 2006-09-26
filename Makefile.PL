@@ -1,18 +1,26 @@
 # $RCSfile: Makefile.PL,v $
 # $Author: swaj $
-# $Revision: 1.3 $
+# $Revision: 1.4 $
 
 require 5.008;
 use ExtUtils::MakeMaker;
 
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile that is written.
 
 WriteMakefile(
-    NAME              => 'Sdict',
-    VERSION_FROM      => 'lib/Sdict.pm', # finds $VERSION
-    PREREQ_PM         => {}, # e.g., Module::Name => 1.1
-    ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
-      (ABSTRACT_FROM  => 'lib/Sdict.pm', # retrieve abstract from module
-       AUTHOR         => 'Alexey Semenoff [http://swaj.net]') : ()),
+
+	      NAME              => 'Sdict',
+	      VERSION_FROM      => 'lib/Sdict.pm',
+
+	      EXE_FILES => [ "bin/sdict.plx",
+			     "bin/dctinfo.plx",
+			     "bin/sdict-tools.plx",
+			   ],
+
+	      PREREQ_PM         => { Compress::Zlib => 0.0 },
+
+	      ( $] >= 5.005 ? ( ABSTRACT_FROM  => 'lib/Sdict.pm',
+				AUTHOR         => 'Alexey Semenoff [http://swaj.net]') : () ),
 );
+
+
+__END__
