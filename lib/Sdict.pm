@@ -1,6 +1,6 @@
 # $RCSfile: Sdict.pm,v $
 # $Author: swaj $
-# $Revision: 1.34 $
+# $Revision: 1.35 $
 #
 # Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
 # Distributed under GNU Public License.
@@ -46,7 +46,7 @@ use vars qw(
 	    $sort_table_pl
 	    );
 
-$VERSION = '2.7';
+$VERSION = '2.8';
 
 @ISA = qw(Exporter);
 
@@ -123,6 +123,21 @@ sub new () {
     my $class = shift;
     my $self  = {};
     $self->{ init } = 0;
+
+    my $cpu = q{};
+    $self->{ big_endian } = 0;
+
+    eval { use Config; $cpu = $Config{byteorder};  };
+
+    if ($@ || !$cpu) {
+	warn "unable to get CPU type";
+    }
+
+    $self->{ big_endian } = 1 if ($cpu eq '4321' || $cpu eq '87654321');
+
+    # TODO: add support for big-endian
+    die "\nERROR: Big-endian systems are not yet supported!\n" if ($self->{ big_endian });
+
     return bless $self, $class;
 }
 
@@ -542,7 +557,7 @@ sub get_next_word ($) {
 	exit 1;
     }
 
-    $next = unpack ( "S", substr ( $hdr, 0, 2 ) );
+	$next = unpack ( "S", substr ( $hdr, 0, 2 ) );
 
     unless ( $next ) {
 	prinfo 'Last word reached';
