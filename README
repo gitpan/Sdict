@@ -39,7 +39,7 @@ The only little-endian architectures are supported.
 
 COPYRIGHT AND LICENSE
 
-Copyright (c) 2001-2006 by Alexey Semenoff [http://swaj.net].
+Copyright (c) 2001-2007 by Alexey Semenoff [http://swaj.net].
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.5 or,

@@ -2,11 +2,11 @@
 #
 # $RCSfile: sdict.cgi,v $
 # $Author: swaj $
-# $Revision: 1.19 $
+# $Revision: 1.23 $
 #
-# Sdict web dictionary.
+# Sdict Web Dictionary.
 #
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
+# Copyright (c) Alexey Semenoff 2001-2007. All rights reserved.
 # Distributed under GNU Public License.
 #
 #
@@ -28,9 +28,9 @@
 #
 #       line:
 #
-#                 $dct_path = '/var/lib/sdict';
+#       $dct_path = '/var/lib/sdict';
 #
-#       '$dct_path' should point to directory containing .dct files;
+#       '$dct_path' should point to directory contains .dct files;
 #
 
 use 5.008;
@@ -80,14 +80,19 @@ BEGIN {
     $timeout = 30;
     $SIG{'ALRM'} = sub { $_ = localtime (time); print STDERR "Script timeout: $_\n"; exit; };
     alarm $timeout;
-    $DIC_VERSION='1.1.4';
+    $DIC_VERSION='1.2.2';
     $ip_db = '/tmp/sdict-cgi-db';
     $lock_file = '/tmp/sdict-cgi.lock';
     $reqs_per_ip = 10;
     $restrict = 0;
     $image = '';
     $strip_all_tags = 0;
-    $debug = 1;
+    $offset = 0;
+    $dct = q{};
+    $word = q{};
+    $letter = q{};
+
+    $debug = 0;
 }
 
 use Sdict;
@@ -222,7 +227,7 @@ sub print_results {
     printd "dct '$dct'";
     printd "word '$word'";
 
-    return unless (cleck_or_load_dict() );
+    return unless (check_or_load_dct() );
 
     printd "Searching for '$word'";
 
@@ -233,7 +238,7 @@ sub print_results {
     $art =~ s|<.+?>||g if ($strip_all_tags);
 
     if ($art ne ``) {
-
+	printd 'got normal art';
 	print <<EOS;
         <hr>
         <center>
@@ -246,6 +251,7 @@ sub print_results {
 EOS
 	return;
     } else {
+	printd 'Trying to print_by_letters()';
 	unless (print_by_letters()) {
 	    not_found();
 	    printd 'Not found';
@@ -326,8 +332,8 @@ sub print_dic_list {
 }
 
 
-sub cleck_or_load_dict {
-    printd 'cleck_or_load_dict()';
+sub check_or_load_dct {
+    printd 'check_or_load_dict()';
 
     if ($sd->{infile} eq "$dct_path/$dct") {
 	printd "dct '$dct_path/$dct' already loaded";
@@ -353,7 +359,7 @@ sub cleck_or_load_dict {
 sub print_dic_letters {
     printd 'print_dic_letters()';
 
-    return unless ( cleck_or_load_dict() );
+    return unless (check_or_load_dct() );
 
     my $tit = $sd->{header}->{title};
 
@@ -368,17 +374,53 @@ sub print_dic_letters {
 	
 	#printd "wo>$wo<";
 	$wo = encode ( "utf8", $wo );
-	my $href = $burl . $wo ;
+	my $wou = $wo;
+	utf8_to_url_string (\$wou);
 
-	$href =~ s|\%|%25|g;
-	$href =~ s| |%20|g;
-	$href =~ s|\"|%22|g;
-	$href =~ s|\,|%2C|g;
-	$href =~ s|\;|%3B|g;
-	$href =~ s|\+|%2B|g;
+	my $href = $burl . $wou ;
 
 	print "<a href=\"$href\">" , '[' , $wo , ']</a> ' ;
     }
+}
+
+sub utf8_to_url_string {
+    my $ref_line = $_[0];
+
+    $$ref_line =~ s|\%|%25|g;
+
+
+    $$ref_line =~ s| |%20|g;
+    $$ref_line =~ s|\!|%21|g;
+    $$ref_line =~ s|\"|%22|g;
+    $$ref_line =~ s|\#|%23|g;
+    $$ref_line =~ s|\$|%24|g;
+
+    $$ref_line =~ s|\&|%26|g;
+    $$ref_line =~ s|\'|%27|g;
+    $$ref_line =~ s|\(|%28|g;
+    $$ref_line =~ s|\)|%29|g;
+    $$ref_line =~ s|\*|%2A|g;
+    $$ref_line =~ s|\+|%2B|g;
+    $$ref_line =~ s|\,|%2C|g;
+    $$ref_line =~ s|\-|%2D|g;
+    $$ref_line =~ s|\.|%2E|g;
+    $$ref_line =~ s|\/|%2F|g;
+
+    $$ref_line =~ s|\:|%3A|g;
+    $$ref_line =~ s|\;|%3B|g;
+ 
+    $$ref_line =~ s|\<|%3C|g;
+    $$ref_line =~ s|\=|%3D|g;
+    $$ref_line =~ s|\>|%3E|g;
+    $$ref_line =~ s|\?|%3F|g;
+
+    $$ref_line =~ s|\\|%5C|g;
+    $$ref_line =~ s|\^|%5E|g;
+    $$ref_line =~ s|\`|%60|g;
+    $$ref_line =~ s|\{|%7B|g;
+    $$ref_line =~ s/\|/%7C/g;
+    $$ref_line =~ s|\}|%7D|g;
+    $$ref_line =~ s|\~|%7E|g;
 }
 
 
@@ -387,7 +429,13 @@ sub print_by_letters {
 
 # dictionary already loaded, search string is in '$word'
 
-    my $word_d = decode ("utf8", $word);
+    #printd "word = '$word'";
+
+    my $word_d = q{};
+    eval { $word_d = decode ("utf8", $word); };
+
+    #printd "word_d = '$word_d'";
+
     my $word_len = length ($word_d);
 
     my $sndx_ref = undef;
@@ -406,8 +454,8 @@ sub print_by_letters {
 	$sndx_ref = $sd->{ sindex_3 };
 	$sl = 3
     }
- 
-    my $wrd = substr ( decode ("utf8", $word), 0, $sl);
+    my $wrd = q{};
+    eval { $wrd = substr ( decode ("utf8", $word), 0, $sl); };
 
     my $p = undef;
 
@@ -417,14 +465,24 @@ sub print_by_letters {
     for my $j ( @{ $sndx_ref } ) {
 
 	my ( $wo, $ndx ) = @$j;
-	my $wo =  decode ("utf8", $wo);
+
+	eval { $wo =  decode ("utf8", $wo); };
+
+	if (0) { #$debug) { 
+	    my $st = $wo;
+	    eval { from_to($st, "utf8", "KOI8-R"); };
+	    printd "st = '$st'";
+	}
 
 	if ( $wo eq $wrd ) {
 	    $p = $ndx;
 	    printd "hit p = '$p'";
 	    last;
 	}
+
     }
+
+    printd 'zero returning';
 
     return 0 unless (defined ($p) );
 
@@ -439,7 +497,7 @@ sub print_by_letters {
 
     for (my $i = 0; $i < $size; $i++) {
 
-	$cw = decode ( "utf8", $sd->get_next_word );
+	eval { $cw = decode ( "utf8", $sd->get_next_word ); };
 
 	#my $cwe =  encode ( "utf8", $cw );
 	#from_to($cwe, "utf8", "koi8-r"); 
@@ -469,21 +527,24 @@ sub print_by_letters {
 
     for ( $ii=0; $ii < SDICT_LOAD_ITEMS; $ii++ ) {
 
-        $cw = decode ( "utf8", $sd->get_next_word );
+        eval { $cw = decode ( "utf8", $sd->get_next_word ); };
 	printd "cw = '$cw'";
 
 	last if ( substr ( $cw, 0, $word_len ) ne $word_d or $cw eq {}  );
 
 	$cw = encode ( "utf8", $cw );
 
-	my $href = $burl . $cw ;
+	my $cwu = $cw;
+	utf8_to_url_string (\$cwu);	
+	my $href = $burl . $cwu ;
 
 	$href .= "&offset=$offset" if ($offset);
 
-	my $art_full =  decode ( "utf8", $sd->read_unit ( $sd->{ articles_pos } +
+	my $art_full = q{};
+	eval { $art_full =  decode ( "utf8", $sd->read_unit ( $sd->{ articles_pos } +
 						    $sd->{ cur_word_pos }
 						    )
-				 );
+				     ); };
 
 	my $art = substr ( $art_full, 0, SDICT_ARTICLE_LEN );
 
@@ -507,10 +568,7 @@ sub print_by_letters {
 
     my $purl = $sname . $ENV{ 'PATH_INFO' } . "?search=search&dicname=$dct&word=$word&offset=";
 
-    #printd "1>>>$ii<<<";
-    #printd "2>>>$cw<<<";
-    #printd "3>>>$offset<<<";
-    #printd "4>>>$prevoffset<<<";
+    #printd "1>>>$ii<<<"; printd "2>>>$cw<<<"; printd "3>>>$offset<<<"; printd "4>>>$prevoffset<<<";
 
     if ( $ii >= SDICT_LOAD_ITEMS && $cw ne q{} ) {
 	printd "Prev: '$prevoffset'  Next: '$nextoffset'";
@@ -534,7 +592,7 @@ sub print_by_letters {
 sub print_by_letter {
     printd 'print_by_letter()';
 
-    return unless ( cleck_or_load_dict() );
+    return unless (check_or_load_dct() );
 
     my $tit = $sd->{header}->{title};
 
@@ -542,19 +600,17 @@ sub print_by_letter {
     print h1 "<a href=\"$durl\">$tit</a>";
 
     print '<p>';
-    my $lurl = $sname . $ENV{ 'PATH_INFO' } . "?dicname=$dct&letter=$letter";
+    my $sletter = $letter;
+    utf8_to_url_string (\$sletter);
 
-    my $href = "<a href=\"$lurl\">$letter</a>:";
-    $href =~ s|\%|%25|g;
-    $href =~ s| |%20|g;
-    $href =~ s|\"|%22|g;
-    $href =~ s|\,|%2C|g;
-    $href =~ s|\;|%3B|g;
-    $href =~ s|\+|%2B|g;
+    my $lurl = $sname . $ENV{ 'PATH_INFO' } . "?dicname=$dct&letter=$sletter";
+
+    my $href = "<a href=\"$lurl\">$letter</a>:";    
 
     print h1 "$href";
 
-    my $wrd = substr ( decode ("utf8", $letter), 0, 1 );
+    my $wrd = q{};
+    eval { $wrd = substr ( decode ("utf8", $letter), 0, 1 ); };
 
     my $p = undef;
 
@@ -589,23 +645,32 @@ sub print_by_letter {
 	}
     }
 
-    for ( $ii=0; $ii < SDICT_LOAD_ITEMS; $ii++ ) {
-
-        $cw = decode ( "utf8", $sd->get_next_word );
-
+    for ( $ii=0; $ii < SDICT_LOAD_ITEMS; $ii++ )
+    {
+        eval { $cw = decode ( "utf8", $sd->get_next_word ); };
 	last if ( substr ( $cw, 0, 1 ) ne $wrd or $cw eq {}  );
+	eval { $cw = encode ( "utf8", $cw ); };
 
-	$cw = encode ( "utf8", $cw );
+	printd 'printing item';
 
+	if (0) # $debug
+	{
+	    my $cwt = $cw;
+	    from_to($cwt, "utf8", "KOI8-R");	
+	    printd "cwt= '$cwt'"; 
+	}
 
-	my $href = $burl . $cw ;
+	my $cwu = $cw;
+	utf8_to_url_string (\$cwu);	
+	my $href = $burl . $cwu ;
+
 
 	$href .= "&offset=$offset" if ($offset);
-
-	my $art_full =  decode ( "utf8", $sd->read_unit ( $sd->{ articles_pos } +
+	my $art_full = q{};
+	eval { $art_full =  decode ( "utf8", $sd->read_unit ( $sd->{ articles_pos } +
 						    $sd->{ cur_word_pos }
 						    )
-				 );
+				     ); };
 
 	my $art = substr ( $art_full, 0, SDICT_ARTICLE_LEN );
 
@@ -615,12 +680,10 @@ sub print_by_letter {
 	$art =~ s|</t>|] |;
 	$art =~ s|<.+?>||g;
 
-	$art = encode ( "utf8", $art ) ;
+	eval { $art = encode ( "utf8", $art ) ; };
 
 	print "<p> <b><a href=\"$href\">$cw</a></b><br> $art";
-
 	print "<a href=\"$href\">[...]</a>" if ($bigger);
-
 	print '</p>';
     }
 
@@ -628,10 +691,7 @@ sub print_by_letter {
     my $prevoffset = $offset > SDICT_LOAD_ITEMS ? $offset - SDICT_LOAD_ITEMS  : -1;
     my $purl = $sname . $ENV{ 'PATH_INFO' } . "?dicname=$dct&letter=$letter&offset=";
 
-    #printd "1>>>$ii<<<";
-    #printd "2>>>$cw<<<";
-    #printd "3>>>$offset<<<";
-    #printd "4>>>$prevoffset<<<";
+    #printd "1>>>$ii<<<"; printd "2>>>$cw<<<"; printd "3>>>$offset<<<"; printd "4>>>$prevoffset<<<";
 
     if ( $ii >= SDICT_LOAD_ITEMS && $cw ne q{} ) {
 	printd "Prev: '$prevoffset'  Next: '$nextoffset'";
@@ -699,7 +759,7 @@ sub print_form {
     print '<table nowrap border=0><tr><td>';
     print $q->submit('search','Search');
     print "</td><td>";
-    print $q->textfield( -name=>'word', -default=>'', -size=>20, -maxlength=>40);
+    print $q->textfield( -name=>'word', -default=>'', -size=>20, -maxlength=>255);
     print '</td><td> in </td><td>';
 
     print $q->popup_menu( -name=>'dicname', -values=> \@vals, -labels=>\%DICTS );
@@ -724,7 +784,7 @@ EOF
 
 
 sub printd (;@) {
-    $debug && print STDERR '"DEBUG: ', @_, "\n";
+    $debug && eval { no warnings ; print STDERR '"DEBUG: ', @_, "\n"; };
 }
 
 
@@ -735,25 +795,14 @@ sub print_help {
     print <<EOF;
     <h1>About:</h1>
 
-     <table cellpadding=5 cellspacing=5 border=0>
-       <tr>
-	  <td rowspan=3> <img src="$snamei" alt="logo"> </td>
-	  <td><strong>
-          Web dictionary script is a part of <a href="http://swaj.net/sdict/index.html">Sdictionary project</a>.  Ver $DIC_VERSION.  
-          </strong></td>
-       </tr>
-	
+     <table cellpadding=4 cellspacing=5 border=0>
         <tr>
-	<td><strong>
-	    Was written by (c) Alexey Semenoff, 2001-2006.
-	</strong><td>
-		    
-       </tr><tr>
-        <td><strong>
-	        Distributed under GNU General Public License.
-	    </strong><td>
-	
-       </tr>
+           <td rowspan=5> <img src="$snamei" alt="logo"> </td>
+	   <td><strong>Sdictionary, CGI module, ver. $DIC_VERSION. Written by (c) Alexey Semenoff, 2001-2007.</strong><td>
+        </tr>
+        <tr> <td><strong>This script is part of the <a href="http://swaj.net/sdict/index.html">Sdictionary project</a>.</td> </tr>
+        <tr><td><strong>Distributed under GNU General Public License.</strong><td></tr>
+        <tr><td><strong>SysInfo: Perl: $]; Sdict: $Sdict::VERSION.</td></tr>
      </table>
 EOF
 
@@ -779,7 +828,7 @@ sub log_hit {
     my %month_of_day = qw(Jan 01 Feb 02 Mar 03 Apr 04 May 05 Jun 06
                          Jul 07 Aug 08 Sep 09 Oct 10 Nov 11 Dec 12);
 
-    $_ = localtime ( time ); split ( /\s+|:/) ;
+    $_ = localtime ( time ); @_ = split ( /\s+|:/) ;
     $_ = $_[2];
     unless (/\d\d/) { $_ = '0'. $_[2]; }
     my $cdate = "$_[6]/$month_of_day{$_[1]}/$_ $_[3]:$_[4]:$_[5]";

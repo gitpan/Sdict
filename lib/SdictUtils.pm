@@ -1,8 +1,8 @@
 # $RCSfile: SdictUtils.pm,v $
 # $Author: swaj $
-# $Revision: 1.4 $
+# $Revision: 1.5 $
 #
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
+# Copyright (c) Alexey Semenoff 2001-2007. All rights reserved.
 # Distributed under GNU Public License.
 #
 

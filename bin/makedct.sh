@@ -2,12 +2,7 @@
 #
 # $RCSfile: makedct.sh,v $
 # $Author: swaj $
-# $Revision: 1.1 $
-#
-#
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
-# Distributed under GNU Public License.
-#
+# $Revision: 1.2.2.1 $
 #
 # This script will look for .sdct source files in the current directory
 # then compile them to .dct files - binary format 

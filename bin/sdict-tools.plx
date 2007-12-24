@@ -2,14 +2,10 @@
 #
 # $RCSfile: sdict-tools.plx,v $
 # $Author: swaj $
-# $Revision: 1.11 $
+# $Revision: 1.12.2.1 $
 #
-# Sdict convertion tools
+# Sdict Convertion Tools
 #
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
-# Distributed under GNU Public License.
-#
-
 
 use 5.008;
 use strict;

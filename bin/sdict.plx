@@ -2,11 +2,11 @@
 #
 # $RCSfile: sdict.plx,v $
 # $Author: swaj $
-# $Revision: 1.11 $
+# $Revision: 1.12 $
 #
 # Sdict simple search tool
 #
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
+# Copyright (c) Alexey Semenoff 2001-2007. All rights reserved.
 # Distributed under GNU Public License.
 #
 

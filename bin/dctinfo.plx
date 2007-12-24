@@ -2,11 +2,7 @@
 #
 # $RCSfile: dctinfo.plx,v $
 # $Author: swaj $
-# $Revision: 1.2 $
-#
-#
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
-# Distributed under GNU Public License.
+# $Revision: 1.3.2.1 $
 #
 
 use 5.008;

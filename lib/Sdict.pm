@@ -1,8 +1,8 @@
 # $RCSfile: Sdict.pm,v $
 # $Author: swaj $
-# $Revision: 1.35 $
+# $Revision: 1.36.2.2 $
 #
-# Copyright (c) Alexey Semenoff 2001-2006. All rights reserved.
+# Copyright (c) Alexey Semenoff 2001-2007. All rights reserved.
 # Distributed under GNU Public License.
 #
 
@@ -44,9 +44,12 @@ use vars qw(
 	    $VERSION_PTR_POS
 	    $sort_table
 	    $sort_table_pl
+
+	    $HDR2_SIG_POS
+	    $BIN1_PTR_POS
 	    );
 
-$VERSION = '2.8';
+$VERSION = '3.0';
 
 @ISA = qw(Exporter);
 
@@ -64,7 +67,7 @@ use constant {
     BZIP2_COMPRESSION_LEVEL  => 9               ,
 
     SDICT_SIG                => 'sdct'          ,
-    SDICT_HEADER_SIZE        => 43              ,
+    SDICT_HEADER_SIZE        => 52              ,
     SDICT_SOURCE_FILE_SEP    => '___'           ,
     SDICT_SOURCE_FILE_SEP_O  => '___'           ,
     SDICT_WORD_MAX_SIZE      => 65535 - 8       ,
@@ -77,6 +80,16 @@ use constant {
     SDICT_FILE_EXT           => '.dct'          ,
     SDICT_SEARCH_FORWARD     => 15000           ,
     SDICT_SINDEX_WARN        => 1940000         ,
+    SDICT_HDR2_SIG	     => 4061299974	, # 0xf2128506
+
+    SDICT_IMG_PNG            => 1		,
+    SDICT_IMG_GIF            => 2		,
+    SDICT_IMG_JPEG           => 3		,
+    SDICT_IMG_JB2            => 4		,
+    SDICT_IMG_IW44           => 5		,
+    SDICT_IMG_DJVU           => 1001		,
+    SDICT_SND_MP3            => 32		, # 0x20
+    SDICT_SND_WAV            => 33		, # 0x21
 };
 
 sub prerror (@);
@@ -113,6 +126,9 @@ BEGIN {
       $SINDEX_PTR_POS     = hex ( "0x1f" );
       $FINDEX_PTR_POS     = hex ( "0x23" );
       $ARTICLES_PTR_POS   = hex ( "0x27" );
+
+      $HDR2_SIG_POS 	  = hex ( "0x2b" );
+      $BIN1_PTR_POS 	  = hex ( "0x30" );
 
       $debug = 0;
       $PACKAGE = __PACKAGE__;
@@ -163,11 +179,18 @@ Usage: $0
    [ --sort=numeric          ]   - numeric sorting
 
    [ --compression=none|gzip ]   Use compression; default is none,
-                                 gzip is better choice 
+                                 gzip is better choice
    [ --lowercase-alias       ]   Duplicate word list with lowercase
                                  aliases (useful for PDA)
    [ --force-to-lowercase    ]   Force all words to lowercase first
    [ --disable-duplicates    ]   Stop with an error if duplicate words found
+
+
+   [ --parse-embedded	     ]   Handle embedded images
+   [ --images-dir=path       ]   Path to embedded images, default is './images'
+   [ --sounds-dir=path       ]   Path to embedded sounds, default is './sounds'
+   [ --try-djvu-first        ]   Use DJVU file if exists
+
    [ --fool-terminal         ]   Force to use non-Unicode terminal output
 ------------------------------------------------------------------------------
 EOS
@@ -222,6 +245,10 @@ sub parse_args ($) {
 	$disableduplicates,
 	$printinfo,
 	$convertcharset,
+	$images_dir,
+	$sounds_dir,
+	$parse_embedded,
+	$try_djvu_first,
 	);
 
     GetOptions(
@@ -238,7 +265,11 @@ sub parse_args ($) {
 	       "force-to-lowercase" => \$forcetolowercase,
 	       "disable-duplicates" => \$disableduplicates,
 	       "printinfo"	    => \$printinfo,
-	       "fool-terminal"      => \$convertcharset, 
+	       "fool-terminal"      => \$convertcharset,
+	       "images-dir=s"       => \$images_dir,
+	       "sounds-dir=s"       => \$sounds_dir,
+	       "parse-embedded"	    => \$parse_embedded,
+	       "try-djvu-first"	    => \$try_djvu_first,
 	       );
 
     prinfo "Started, module version $VERSION";
@@ -266,6 +297,9 @@ sub parse_args ($) {
 
     $class->{ sort           } = $sort           || 0;
     $class->{ convertcharset } = $convertcharset || 0;
+    $class->{ parse_embedded } = $parse_embedded || 0;
+    $class->{ try_djvu_first } = $try_djvu_first || 0;
+
 
     unless ($compressor) {
 	$class->{ compressor } = COMPRESSOR_NONE;
@@ -339,6 +373,24 @@ sub parse_args ($) {
 	$class->{ disableduplicates } = $disableduplicates;
     }
 
+    unless ( $images_dir ) {
+	$class->{ images_dir } = 'images/';
+    }
+    else {
+	$class->{ images_dir } = $images_dir;
+    }
+
+    unless ( $sounds_dir ) {
+	$class->{ sounds_dir } = 'sounds/';
+    }
+    else {
+	$class->{ sounds_dir } = $sounds_dir;
+    }
+
+    $class->{ embedded_cur_num    } = 0;
+    $class->{ embedded_cur_offset } = 0;
+    $class->{ embedded_total      } = 0;
+    $class->{ embedded_offsets    } = [];
 
     $class->{ init } = 1;
     prinfo 'Initialization OK!';
@@ -875,7 +927,9 @@ sub read_header ($) {
 	$copyright,
 	$sindex_total,
 	$sindex_pos,
-	$version
+	$version,
+	$embedded_offset,
+	$embedded_total,
 	);
 
     my $infile = $class->{ infile };
@@ -904,7 +958,6 @@ sub read_header ($) {
     $a_lang =~ s|\x0||g;
 
     $compr =  substr ( $hdr, $COMPRESSOR_POS, 1 );
-
 
     my $co = unpack ( "C",  $compr );
     my $cot = $co;
@@ -999,13 +1052,38 @@ sub read_header ($) {
     $class->{ header }->{ version      } = $version;
     $class->{ header }->{ w_lang       } = $w_lang;
     $class->{ header }->{ a_lang       } = $a_lang;
-
     $class->{ header }->{ words_total  } = $tot_words;
     $class->{ header }->{ sindex_total } = $sindex_total;
     $class->{ header }->{ sindex_ptr   } = $sindex_pos;
-
     $class->{ header }->{ f_index_pos  } = $f_index_ptr;
     $class->{ header }->{ articles_pos } = $articles_ptr;
+    $class->{ header }->{ dct_v2       } = 0;
+
+
+    if ( unpack ( "L", substr ( $hdr, $HDR2_SIG_POS, 4 ) ) == SDICT_HDR2_SIG )
+    {
+	prinfo 'Version 2 signature found';
+
+	$embedded_offset = unpack ( "L", substr ( $hdr, $BIN1_PTR_POS, 4 ) );
+
+	unless ( sysseek ( IF, $embedded_offset, 0 ) ) {
+	    prerror "Seek error: $!";
+	    return 1;
+	}
+
+	unless ( sysread ( IF, $embedded_total, 4, 0 ) ) {
+	    prerror "Unable to sysread from file '$infile':$!";
+	    return 1;
+	}
+	$embedded_total = unpack ( "L", substr ( $embedded_total, 0, 4 ) );
+
+	prinfo "   Embedded BIN-1 offset: ", sprintf ( "0x%x", $embedded_offset ) ;
+	prinfo "   Embedded BIN-1 total :  $embedded_total";
+
+	$class->{ header }->{ dct_v2          } = 1;
+	$class->{ header }->{ embedded_offset } = $embedded_offset;
+	$class->{ header }->{ embedded_total  } = $embedded_total;
+    }
 
     return 1;
 }
@@ -1351,6 +1429,8 @@ sub analyze_gaps ($) {
 sub compile ($) {
     my $class = shift;
 
+    prinfo '--- COMPILE ---';
+
     if ( $class->{ slevels } != 3 ) {
 	prinfo 'Use non-standard short index levels value can cause incompatibility problems!';
 	if ( -t STDIN && -t STDOUT ) {
@@ -1364,28 +1444,28 @@ sub compile ($) {
 	}
     }
 
-    prinfo 'Retrieving headers';
+    prinfo '--- Retrieving headers ---';
     exit 1 unless $class->get_infile_headers;
 
-    prinfo 'Making header';
+    prinfo '--- Making header ---';
     exit 1 unless $class->create_header;
 
-    prinfo 'Retrieving articles and making words hash';
+    prinfo '--- Retrieving articles and making words hash ---';
     exit 1 unless $class->make_articles;
 
-    prinfo 'Making full index';
+    prinfo '--- Making full index ---';
     exit 1 unless $class->make_full_index;
 
-    prinfo 'Making short index';
+    prinfo '--- Making short index ---';
     exit 1 unless $class->make_short_index;
 
-    prinfo 'Tunning header';
+    prinfo '--- Tunning header ---';
     exit 1 unless $class->correct_header;
 
-    prinfo 'Joining files';
+    prinfo '--- Joining files ---';
     exit 1 unless $class->join_files;
 
-    prinfo 'Cleanups';
+    prinfo '--- Cleanups ---';
     exit 1 unless $class->cleanups;
 
     return 1;
@@ -1515,9 +1595,12 @@ sub create_header ($) {
 
     $sl = pack ( "C", ( $sl | $co ) );
 
+    my $hdr2_sig_pre =  SDICT_HDR2_SIG + 1; # wrong at the moment, correct later
+
     my $header =  SDICT_SIG . $w_lang . $a_lang . $sl .
-	pack ("L8", $word_amount, $sindex_amount, $title_ptr, $copyright_ptr, $version_ptr,
-	      $short_ndx_ptr, $full_ndx_ptr, $articles_ptr); 
+	pack ("L9CL", $word_amount, $sindex_amount, $title_ptr, $copyright_ptr,
+	      $version_ptr, $short_ndx_ptr, $full_ndx_ptr, $articles_ptr,
+	      $hdr2_sig_pre, 9, hex ("0xffffffff")  ); 
 
     $class->{ header_file_size } =
 	length ( $header         ) +
@@ -1537,6 +1620,7 @@ sub create_header ($) {
     binmode F;
 
     print F $header;
+
     print F $title_unit;
     print F $copyright_unit;
     print F $version_unit;
@@ -1608,6 +1692,31 @@ sub correct_header ($) {
 	syswrite ( HDR, $val );
     }
 
+
+
+    if ( $class->{ parse_embedded } && $class->{ embedded_total } )
+    {
+	prinfo 'Adding bin1 storage';
+
+	unless ( sysseek ( HDR,  $HDR2_SIG_POS, 0 ) ) {
+	    prerror "Seek error: $!";
+	    exit 1;
+	}
+
+
+	$val = pack ("LCL",
+		     SDICT_HDR2_SIG,
+		     1,
+		     $class->{ header_file_size  } +
+		     $class->{ temp_si_file_size } +
+		     $class->{ temp_fi_file_size } +
+		     $class->{ temp_ar_file_size }
+		     );
+	syswrite ( HDR, $val );
+
+    }
+
+
     close HDR;
     return 1;
 
@@ -1632,6 +1741,8 @@ sub make_articles ($) {
 	$art,
 	$alword,
 	$aunit,
+	%h_img,
+	%h_snd,
 	);
 
     my $sep = SDICT_SOURCE_FILE_SEP;
@@ -1639,35 +1750,59 @@ sub make_articles ($) {
 
 
     if ( $class->{ lowercasealias } || $class->{ forcetolowercase } ) {
-
 	eval 'use SdictUtils';
-
 	if ( $@ ) {
 	    prerror "Unable to load module 'SdictUtils' $@";
 	    exit 1;
 	}
     }
 
-    my $temp_afile = $oufile . '-tmp1-' . $$;
 
+    my $temp_afile = $oufile . '-tmp1-' . $$;
     prinfo "Creating temporary file '$temp_afile'";
     unless ( open ( DF, ">$temp_afile" ) ) {
 	prerror "Unable create file '$temp_afile':$!";
 	return 0;
     }
-
     binmode DF;
-
     $class->{ temp_afile } = $temp_afile;
 
-    my $infile = $class->{ infile };
 
+    my $temp_bin1_ndx = $oufile . '-tmp4-' . $$; # for bin1 index storage
+    if ( $class->{ parse_embedded } )
+    {
+	prinfo "Creating temporary file '$temp_bin1_ndx'";
+	unless ( open ( BFI, ">$temp_bin1_ndx" ) ) {
+	    prerror "Unable create file '$temp_bin1_ndx':$!";
+	    return 0;
+	}
+	binmode BFI;
+	$class->{ temp_bin1_ndx_file } = $temp_bin1_ndx;
+    }
+
+
+    my $temp_bin1 = $oufile . '-tmp5-' . $$; # for bin1 storage
+    if ( $class->{ parse_embedded } )
+    {
+	prinfo "Creating temporary file '$temp_bin1'";
+	unless ( open ( BF, ">$temp_bin1" ) ) {
+	    prerror "Unable create file '$temp_bin1':$!";
+	    return 0;
+	}
+	binmode BF;
+	$class->{ temp_bin1_file } = $temp_bin1;
+    }
+
+
+    my $infile = $class->{ infile };
     prinfo "Parsing source file '$infile'";
+
 
     unless ( open ( SF, "< $infile" ) ) {
 	prerror "Unable open file '$infile': $!";
 	return 0;
     }
+
 
     while (<SF>) {
 	$lines++;
@@ -1678,7 +1813,8 @@ sub make_articles ($) {
 	last if /^<\/header>/ ;
     }
 
-    while (<SF>) {
+    while (<SF>)
+    {
 	$lines++;
 	chomp;
 	s/\r$//;
@@ -1710,7 +1846,112 @@ sub make_articles ($) {
 	}
 
 	$lines_passed++;
+
+	#
+	# Handle images if any
+        #
+	if ( $class->{ parse_embedded } )
+	{
+	    #
+            # Images
+            #
+	    my $image_unit     = q{};
+	    my $image_unit_len = 0;
+
+	    while ( $art =~ m|<img\s+(.+?)\s*>|gi )
+	    {
+		my $emb_sur_num = $class->{ embedded_cur_num } ;
+		my $img_filename =  $class->{ images_dir } . $1;
+
+		unless ( $img_filename ) {
+		    prerror "Bad image filename '$img_filename'" ;
+		    return 0;
+		}
+
+		if ( exists $h_img{ $img_filename } ) {
+		    prinfo "Image $img_filename already in storage, num= $h_img{ $img_filename }";
+
+		    $art =~ s|<img\s+(.+?)\s*>|<IMAGE $h_img{ $img_filename }>|i  ;
+		}
+		else {
+		    $h_img{ $img_filename } = $emb_sur_num ; 
+		    $art =~ s|<img\s+(.+?)\s*>|<IMAGE $emb_sur_num>|i  ;
+
+		    $image_unit = create_image_unit ( $img_filename, $class->{ try_djvu_first } );
+
+		    $image_unit_len = length ( $image_unit );
+		    unless ($image_unit_len)
+		    {
+			warn "Cannot create image unit";
+			return 0;
+		    }
+		    $_ = $class->{ embedded_cur_offset };
+		    prinfo "Addind image, unit size= $image_unit_len, offset= $_";
+
+		    push ( @{$class->{ embedded_offsets }}, $class->{ embedded_cur_offset } );
+		    print BF $image_unit;
+
+		    $class->{ embedded_total }++;
+		    $class->{ embedded_cur_num }++;
+		    $class->{ embedded_cur_offset } += $image_unit_len;
+		}
+	    }
+	    $art =~ s|<IMAGE|<img|g;
+
+
+	    #
+            # Sound samples
+            #
+	    my $sound_unit     = q{};
+	    my $sound_unit_len = 0;
+
+	    while ( $art =~ m|<snd\s+(.+?)\s*>|gi )
+	    {
+		my $emb_sur_num = $class->{ embedded_cur_num } ;
+		my $snd_filename =  $class->{ sounds_dir } . $1;
+
+		unless ( $snd_filename ) {
+		    prerror "Bad sound filename '$snd_filename'" ;
+		    return 0;
+		}
+
+		if ( exists $h_snd{ $snd_filename } ) {
+		    prinfo "Sound $snd_filename already in storage, num= $h_snd{ $snd_filename }";
+
+		    $art =~ s|<snd\s+(.+?)\s*>|<SOUND $h_snd{ $snd_filename }>|i  ;
+		}
+		else {
+		    $h_snd{ $snd_filename } = $emb_sur_num ;
+		    $art =~ s|<snd\s+(.+?)\s*>|<SOUND $emb_sur_num>|i  ;
+
+		    $sound_unit = create_sound_unit ( $snd_filename );
+
+		    $sound_unit_len = length ( $sound_unit );
+		    unless ($sound_unit_len)
+		    {
+			warn "Cannot create sound unit";
+			return 0;
+		    }
+		    $_ = $class->{ embedded_cur_offset };
+		    prinfo "Addind sound, unit size= $sound_unit_len, offset= $_";
+
+		    push ( @{$class->{ embedded_offsets }}, $class->{ embedded_cur_offset } );
+		    print BF $sound_unit;
+
+		    $class->{ embedded_total }++;
+		    $class->{ embedded_cur_num }++;
+		    $class->{ embedded_cur_offset } += $sound_unit_len;
+		}
+	    }
+	    $art =~ s|<SOUND|<snd|g;
+	}
+
+
+	#
+	# Pack article into unit
+	#
 	$aunit = create_unit ( $class, $art );
+
 
 	#
 	# to lowercase
@@ -1752,8 +1993,34 @@ sub make_articles ($) {
         # print "L>$line<\n";
     }
 
+    #
+    # Making bin1 indices 
+    #
+    if ( $class->{ parse_embedded } && $class->{ embedded_total } )
+    {
+
+	my $emb_tot = $class->{ embedded_total };
+	prinfo 'Creating bin1 indices, emb_tot= $emb_tot';
+	my $ndx_off = 4 * ( $emb_tot + 1 ); 
+	print BFI pack ( "L", $emb_tot );
+
+	for my $ndx ( @{$class->{ embedded_offsets }} )
+	{
+	    print BFI pack ( "L", $ndx + $ndx_off );
+	}
+    }
+
     close SF;
     close DF;
+
+    $class->{ temp_ar_file_size } = ( stat ( $temp_afile ) )[7];    
+
+
+    if ( $class->{ parse_embedded } )
+    {
+	close BF;
+	close BFI;
+    }
 
 
     # lowercase aliases
@@ -1793,6 +2060,236 @@ sub make_articles ($) {
     $class->sort_words_list if ( $class->{ sort } );
 
     return 1;
+}
+
+
+sub create_sound_unit ($) {
+    my ($file) = @_;
+    prinfo "Creating sound unit from file '$file'";
+
+    my $unit = q{};
+
+    my $snd_type = get_sound_type ($file);
+
+
+    if ( $snd_type == SDICT_SND_MP3 )
+    {
+	prinfo "MP3 sound file, type $snd_type";
+
+	unless (open (SNF, "< $file")) {
+	    prerror "Cannot open '$file': $!";
+	    return q{};
+	}
+	binmode SNF;
+
+	my $raw_sound = q{};
+	{
+	    local $/ = undef;
+	    $raw_sound = <SNF>;
+	}
+	close SNF;
+
+
+	my $snd_len = 1 ; # TODO get_sound_length ($file);
+
+	if (! $snd_len ) {
+	    prerror "cannot get sound length for file '$file'";
+	    return q{};
+	}
+
+	my $sz = length ($raw_sound);
+	prinfo "Sound type $snd_type, len= $snd_len sec, size= $sz bytes" ;
+
+	$unit = pack ("LCS",
+		      $sz + 1 + 2,
+		      $snd_type,
+		      $snd_len  ) . $raw_sound;
+    }
+    else
+    {
+	prerror "unsupported sound type $snd_type";
+    }
+
+    return $unit;
+}
+
+
+sub get_sound_type ($) {
+    my $file = $_[0];
+
+    $file =~ s|.+\.||;
+    prinfo "File suffix is '$file'";
+
+
+    if ( $file =~ /mp3/i ) {
+	return SDICT_SND_MP3;
+    }
+    return 0;
+}
+
+
+sub create_image_unit ($) {
+    my ($file, $try_djvu_first) = @_;
+    prinfo "Creating image unit from file '$file'";
+
+    my $unit = q{};
+
+    my $img_type = get_image_type ($file);
+
+
+    if ( $try_djvu_first &&
+	 ( $img_type == SDICT_IMG_PNG ||
+	   $img_type == SDICT_IMG_GIF ||
+	   $img_type == SDICT_IMG_JPEG ) )
+    {
+	my $file2 = $file;
+	$file2 =~ s|^(.+)\..+$|$1.djvu|;
+
+	prinfo "Trying file '$file2' instead of '$file'";
+
+	if (open (IMF, "< $file2")) {
+	    close IMF;
+	    prinfo 'Yes, found';
+	    $file = $file2;
+	    $img_type = SDICT_IMG_DJVU;
+	}
+	else {
+	    prinfo 'Not found';
+	}
+    }
+
+
+    if ( $img_type == SDICT_IMG_PNG ||
+	 $img_type == SDICT_IMG_GIF ||
+	 $img_type == SDICT_IMG_JPEG )
+    {
+	prinfo "usual image file, type $img_type";
+
+	unless (open (IMF, "< $file")) {
+	    prerror "Cannot open '$file': $!";
+	    return q{};
+	}
+	binmode IMF;
+
+	my $raw_image = q{};
+	{
+	    local $/ = undef;
+	    $raw_image = <IMF>;
+	}
+	close IMF;
+
+	my @img_res = get_image_resolution ($file);
+
+	if (! @img_res || ! $img_res[0] || ! $img_res[1] ) {
+	    prerror "cannot get resolution for file '$file'";
+	    return q{};
+	}
+	my $sz = length ($raw_image);
+	prinfo "Image type $img_type, res= $img_res[0]x$img_res[1], size= $sz bytes" ;
+
+	$unit = pack ("LCS2",
+		      $sz + 1 + 2 + 2,
+		      $img_type,
+		      $img_res[0],
+		      $img_res[1] ) . $raw_image;
+
+    }
+    elsif ( $img_type == SDICT_IMG_DJVU )
+    {
+	prinfo "DJVU image file, looking inside";
+	my $djvu = Sdict::Utils::parse_djvu_file ($file);
+	return $unit unless $djvu;
+
+	if ( ! $djvu->{ width } || ! $djvu->{ height } ) {
+	    prerror "cannot get resolution for file '$file'";
+	    return $unit;
+	}
+
+	my @img_res = ( $djvu->{ width }, $djvu->{ height } );
+	my $raw_image = q{};
+	my $sz = 0;
+
+	if ( defined ( $djvu->{ bg44 } ) ) {
+	    $img_type = SDICT_IMG_IW44;
+	    $raw_image = $djvu->{ bg44 } ;
+	}
+
+	if ( defined ( $djvu->{ sjbz } ) ) {
+	    $img_type = SDICT_IMG_JB2;
+	    $raw_image = $djvu->{  sjbz } ;
+	}
+
+	if ( $img_type == SDICT_IMG_DJVU ) {
+	    prerror "cannot get type IW44/JB2";
+	    return $unit;
+	}
+
+	$sz = length ( $raw_image );
+	prinfo "Image type $img_type, res= $img_res[0]x$img_res[1], size= $sz bytes" ;
+
+	$unit = pack ("LCS2",
+		      $sz + 1 + 2 + 2,
+		      $img_type,
+		      $img_res[0],
+		      $img_res[1] ) . $raw_image;
+    }
+    else
+    {
+	prerror "unsupported image type $img_type";
+    }
+
+    return $unit;
+}
+
+
+sub get_image_type ($) {
+    my $file = $_[0];
+
+    $file =~ s|.+\.||;
+    prinfo "File suffix is '$file'";
+
+
+    if ( $file =~ /jp.?g/i ) {
+	return SDICT_IMG_JPEG;
+    }
+
+    if ( $file =~ /gif/i ) {
+	return SDICT_IMG_GIF;
+    }
+
+    if ( $file =~ /png/i ) {
+	return SDICT_IMG_PNG;
+    }
+
+    if ( $file =~ /djv.?/i ) {
+	return SDICT_IMG_DJVU;
+    }
+
+    return 0;
+}
+
+
+sub get_image_resolution ($) {
+    my $file = $_[0];
+
+    unless (open (IDENTITY, "identify $file |")) {
+	warn "cannot run 'identify' from IM";
+	return ();
+    }
+
+    my $str = q{};
+
+    while (<IDENTITY>) {
+	chomp;
+	if ( /$file/ ) {
+	    $str = $_;
+	    last;
+	}
+    }
+    close IDENTITY;
+
+    $str =~ s|$file\s+\w+\s+(\w+).*|$1|;
+    return split (/x/, $str);
 }
 
 
@@ -2139,6 +2636,17 @@ sub join_files ($) {
     prinfo "Merging '$file' into '$ofile'";
     Sdict::Utils::merge ($file, $ofile);
 
+    if ( $class->{ parse_embedded } && $class->{ embedded_total } )
+    {
+	$file = $class->{ temp_bin1_ndx_file };
+	prinfo "Merging '$file' into '$ofile'";
+        Sdict::Utils::merge ($file, $ofile);
+
+	$file = $class->{ temp_bin1_file };
+	prinfo "Merging '$file' into '$ofile'";
+        Sdict::Utils::merge ($file, $ofile);
+    }
+
     return 1;
 }
 
@@ -2154,6 +2662,15 @@ sub cleanups ($) {
 
     prinfo "Removing '", $class->{ temp_si_file }, "'";
     unlink ( $class->{ temp_si_file } );
+
+    if ( $class->{ parse_embedded } )
+    {
+	prinfo "Removing '", $class->{ temp_bin1_file }, "'";
+	unlink ( $class->{ temp_bin1_file } );
+	prinfo "Removing '", $class->{ temp_bin1_ndx_file }, "'";
+	unlink ( $class->{ temp_bin1_ndx_file } );
+
+    }
 
     return 1;
 }
@@ -2323,7 +2840,232 @@ sub compress_s_index ($$) {
 }
 
 
+sub get_embedded_image ($) {
+    my $class = shift;
+    my $imgno = shift;
+    my $img = {};
+    my $tmp = 0;
+
+    unless ( $class->{ header }->{ dct_v2 } ) {
+	prerror 'No embedded objects found';
+	return $img;
+    }
+
+    if ( ! defined ($imgno) || ($imgno +1 ) > $class->{ header }->{ embedded_total } ) {
+	prerror "No such object, num $imgno";
+	return $img;
+    }
+
+
+    my $file = $class->{ infile_handler };
+
+    unless ( sysseek ( $file, $class->{ header }->{ embedded_offset } + 4 * ( $imgno + 1 ), 0 ) )
+    {
+	prerror "Seek error: $!";
+	return $img;
+    }
+
+    unless (sysread ($file, $tmp, 4, 0)) {
+	prerror "Sysread error: $!";
+	return $img;
+    }
+
+    $tmp = unpack ( "L", $tmp );
+    prinfo 'image ofset= ', sprintf ( "0x%x", $tmp ) ;
+
+    my $ifoff = $class->{ header }->{ embedded_offset } + $tmp ;
+    prinfo 'unit ofset= ', sprintf ( "0x%x", $ifoff ) ;
+
+
+    unless ( sysseek ( $file, $ifoff, 0 ) )
+    {
+	prerror "Seek error: $!";
+	return $img;
+    }
+
+    unless (sysread ($file, $tmp, 4, 0)) {
+	prerror "Sysread error: $!";
+	return $img;
+    }
+
+    my $ul = unpack ( "L", $tmp );
+    prinfo 'unit length= ', sprintf ( "0x%x", $ul ) ;
+
+    unless (sysread ($file, $tmp, 5, 0)) {
+	prerror "Sysread error: $!";
+	return $img;
+    }
+
+
+    my $img_type   = unpack ( "C", substr ( $tmp, 0, 1 ) );
+    my $img_width  = unpack ( "S", substr ( $tmp, 1, 2 ) );
+    my $img_height = unpack ( "S", substr ( $tmp, 3, 2 ) );
+    my $img_len    = $ul - 5; # 1 - 2 - 2 ;
+    prinfo "image type= $img_type, size= $img_width x $img_height, len= $img_len";
+
+    my $img_raw = q{};
+
+    unless (sysread ($file, ${ $img->{ raw } } , $img_len, 0)) {
+    	prerror "Sysread error: $!";
+	return $img;
+    }
+
+    $img -> { type   } = $img_type ;
+    $img -> { width  } = $img_width ;
+    $img -> { height } = $img_height ;
+    $img -> { len    } = $img_len ;
+
+
+    if (  $img -> { type } == SDICT_IMG_PNG  ||
+	  $img -> { type } == SDICT_IMG_GIF  ||
+	  $img -> { type } == SDICT_IMG_JPEG ) {
+      return $img;
+    }
+
+
+    if (  $img -> { type } != SDICT_IMG_JB2  &&
+	  $img -> { type } != SDICT_IMG_IW44 ) {
+	return {};
+      }
+
+
+    if (  $img -> { type } != SDICT_IMG_JB2  &&
+	  $img -> { type } != SDICT_IMG_IW44 ) {
+	return {};
+      }
+
+    my $chunk = q{};  
+
+    if ( $img -> { type } == SDICT_IMG_JB2 ) {
+	prinfo 'convert JB2';
+	$chunk = 'Sjbz';
+    }
+    elsif ( $img -> { type } == SDICT_IMG_IW44 ) {
+	prinfo 'convert IW44';
+	$chunk = 'BG44';
+      }
+
+    my $file_tmp1 = $ENV{'HOME'} . "/.ptksdict-$$-tmp1.djvu";
+    my $file_tmp2 = $ENV{'HOME'} . "/.ptksdict-$$-tmp2.png";
+    unless ( open T1, "> $file_tmp1" )
+    {
+	prerror "cannot create $file_tmp1: $!";
+	return {};
+    }
+
+    print T1 'AT&TFORM', pack ( "N", $img_len + 8 + 4 + 8 + 10  );  ;
+    print T1 'DJVUINFO', pack ( "N", 10 ) ;
+    print T1 pack ( "n2C6", $img_width, $img_height, 0x18, 0x0, 0x2c, 0x1, 0x16, 0x1 ) ;
+    print T1 $chunk , pack ( "N", $img_len );
+    print T1 ${ $img->{ raw } } ;
+    close T1;
+
+    system ("ddjvu -format=ppm $file_tmp1 | convert -verbose - $file_tmp2");
+
+    unlink ( $file_tmp1 );
+
+    unless ( open ( T2, "< $file_tmp2" ) ) {
+        prerror "cannot open $file_tmp2: $!";
+        return {};
+    }
+
+    {
+      local $/ = undef;
+      ${ $img->{ raw } } = <T2>;
+    }
+    close T2;
+
+    unlink ($file_tmp2);
+
+    return $img;
+}
+
+
+sub get_embedded_sound ($) {
+    my $class = shift;
+    my $sndno = shift;
+    my $snd = {};
+    my $tmp = 0;
+
+    unless ( $class->{ header }->{ dct_v2 } ) {
+	prerror 'No embedded objects found';
+	return $snd;
+    }
+
+    if ( ! defined ($sndno) || ($sndno +1 ) > $class->{ header }->{ embedded_total } ) {
+	prerror "No such object, num $sndno";
+	return $snd;
+    }
+
+
+    my $file = $class->{ infile_handler };
+
+    unless ( sysseek ( $file, $class->{ header }->{ embedded_offset } + 4 * ( $sndno + 1 ), 0 ) )
+    {
+	prerror "Seek error: $!";
+	return $snd;
+    }
+
+    unless (sysread ($file, $tmp, 4, 0)) {
+	prerror "Sysread error: $!";
+	return $snd;
+    }
+
+    $tmp = unpack ( "L", $tmp );
+    prinfo 'sound ofset= ', sprintf ( "0x%x", $tmp ) ;
+
+    my $ifoff = $class->{ header }->{ embedded_offset } + $tmp ;
+    prinfo 'unit ofset= ', sprintf ( "0x%x", $ifoff ) ;
+
+
+    unless ( sysseek ( $file, $ifoff, 0 ) )
+    {
+	prerror "Seek error: $!";
+	return $snd;
+    }
+
+    unless (sysread ($file, $tmp, 4, 0)) {
+	prerror "Sysread error: $!";
+	return $snd;
+    }
+
+    my $ul = unpack ( "L", $tmp );
+    prinfo 'unit length= ', sprintf ( "0x%x", $ul ) ;
+
+    unless (sysread ($file, $tmp, 3, 0)) {
+	prerror "Sysread error: $!";
+	return $snd;
+    }
+
+    my $snd_type     = unpack ( "C", substr ( $tmp, 0, 1 ) );
+    my $snd_len      = unpack ( "S", substr ( $tmp, 1, 2 ) );
+    my $snd_file_len = $ul - 3; # 1 - 2 ;
+
+    prinfo "snd type= $snd_type, len= $snd_len (x0.1sec)";
+
+    my $snd_raw = q{};
+
+    unless (sysread ($file, ${ $snd->{ raw } } , $snd_file_len, 0)) {
+    	prerror "Sysread error: $!";
+	return $snd;
+    }
+
+    $snd -> { type     } = $snd_type ;
+    $snd -> { len      } = $snd_len ;
+    $snd -> { file_len } = $snd_len ;
+
+    return $snd;
+}
+
+
+#
+# Sdict::Utils;
+#
 package Sdict::Utils;
+
+use strict;
+use IO::File;
+
 
 use constant {
 
@@ -2358,6 +3100,170 @@ sub merge  {
     close (IF);
     close (OF);
 }
+
+sub parse_djvu_file {
+    my ($file) = @_;
+    my $djvu = {};
+    my ($buf, $buf2, $chunk, $chunk_len, $chunk_raw);
+
+    Sdict::prinfo "Parsing file '$file'";
+
+    unless ( sysopen ( DJV, $file, O_RDONLY ) ) {
+	Sdict::prerror "Unable to open file '$file':$!";
+	return $djvu;
+    }
+    binmode DJV;
+
+    unless ( sysread ( DJV, $buf, 4, 0 ) ) {
+	Sdict::prerror "Unable to sysread from file '$file':$!";
+	close DJV;
+	return $djvu;
+    }
+
+    if ( $buf eq 'AT&T' ) {
+	unless ( sysread ( DJV, $buf, 4, 0 ) ) {
+	  Sdict::prerror "Unable to sysread from file '$file':$!";
+	    close DJV;
+	    return $djvu;
+        }
+    }
+
+    if ( $buf ne 'FORM' ) {
+      Sdict::prerror 'Wrong signature';
+	close DJV;
+	return $djvu;
+    }
+
+    unless ( sysread ( DJV, $buf, 4, 0 ) ) {
+	Sdict::prerror "Unable to sysread from file '$file':$!";
+	  close DJV;
+	  return $djvu;
+    }
+
+    my $len = unpack ("N", $buf) + sysseek ( DJV, 0, SEEK_CUR );
+    
+    unless ( sysread ( DJV, $buf, 8, 0 ) ) {
+	Sdict::prerror "Unable to sysread from file '$file':$!";
+	  close DJV;
+	  return $djvu;
+    }
+
+    if ( $buf ne 'DJVUINFO' ) {
+      Sdict::prerror 'Wrong signature';
+	close DJV;
+	return $djvu;
+    }
+
+
+    unless ( sysread ( DJV, $buf, 4, 0 ) ) {
+	Sdict::prerror "Unable to sysread from file '$file':$!";
+	  close DJV;
+	  return $djvu;
+    }
+    my $next_seek = unpack ("N", $buf) + sysseek ( DJV, 0, SEEK_CUR );
+
+
+    unless ( sysread ( DJV, $buf, 10, 0 ) ) {
+	Sdict::prerror "Unable to sysread from file '$file':$!";
+	  close DJV;
+	  return $djvu;
+    }
+    my $w = unpack ("n", substr ($buf, 0, 2) );
+    my $h = unpack ("n", substr ($buf, 2, 2) );
+    if (!$w || !$h) {
+	Sdict::prerror "Unable to get image size";
+	  close DJV;
+	  return $djvu;
+    }
+    $djvu->{ width } =  $w;
+    $djvu->{ height } = $h;
+
+    sysseek ( DJV, $next_seek, 0 );
+
+    my @bad_chunks = qw / Djbz INCL Fgbz /;
+
+    while ( sysseek ( DJV, 0, SEEK_CUR ) < $len )
+    {
+	unless ( sysread ( DJV, $chunk, 4, 0 )==4   ) {
+	  Sdict::prerror "Unable to sysread from file '$file':$!";
+	    close DJV;
+	    return $djvu;
+	}
+
+	unless ( sysread ( DJV, $buf2, 4, 0 ) ) {
+	  Sdict::prerror "Unable to sysread from file '$file':$!";
+	    close DJV;
+	    return $djvu;
+	}
+
+	$chunk_len = unpack ("N", $buf2);
+
+	unless ( sysread ( DJV, $chunk_raw, $chunk_len, 0 ) ) {
+	  Sdict::prerror "Unable to sysread from file '$file':$!";
+	    close DJV;
+	    return $djvu;
+	}
+
+    	Sdict::prinfo "chunk= $chunk, chunk_len= " , sprintf ( "0x%x", $chunk_len ), ' raw size= ', sprintf ( "0x%x", length ($chunk_raw) );
+
+ 	if ( grep (/$chunk/, @bad_chunks) ) {
+	  Sdict::prerror "Illegal chunk '$chunk' in file";
+	    close DJV;
+	    return $djvu;
+	}
+
+	if ( $chunk eq 'Sjbz' ) {
+	    $djvu->{ sjbz } = $chunk_raw;
+	    last;
+	}
+
+	if ( $chunk eq 'BG44' ) {
+	    push @{ $djvu->{ bg44 } }, $chunk_raw ;
+	}
+
+	if (sysseek ( DJV, 0, SEEK_CUR ) & 1) {
+	    sysseek ( DJV, 1, SEEK_CUR );
+	}
+    }
+    close DJV;
+
+
+    if ( defined ( @{ $djvu->{ bg44 } } ) && @{ $djvu->{ bg44 } } )
+    {
+	my $bg44 = shift ( @{ $djvu->{ bg44 } } );
+
+	my $serial = unpack ("C", substr ( $bg44, 0, 1) );
+	my $slices = unpack ("C", substr ( $bg44, 1, 1) );
+
+	Sdict::prinfo "first part (serial $serial), $slices slices";
+	return {} unless $slices;
+	
+	my $full_bg44 = $bg44;
+	
+	# TODO
+	if (0 && scalar ( @{ $djvu->{ bg44 } } ) ) {
+	    for $bg44 ( @{ $djvu->{ bg44 } } )
+	    {
+		$serial = unpack ("C", substr ( $bg44, 0, 1) );
+		my $slices_here = unpack ("C", substr ( $bg44, 1, 1) );
+	      Sdict::prinfo "next part (serial $serial), $slices_here slices";
+		return {} unless $slices_here;
+		$slices += $slices_here;
+		$full_bg44 .= substr ($bg44, 2);
+	    }
+	}
+
+        Sdict::prinfo "slices in total $slices";
+	return {} if ($slices > 255);
+
+	substr $full_bg44, 1, 1, pack ("C", $slices );
+	$djvu->{ bg44 } = undef;
+	$djvu->{ bg44 } = $full_bg44; 
+    }
+
+    return $djvu;
+}
+
 
 1;
 
